@@ -21,8 +21,8 @@ default_args = {
 dag = DAG(
     dag_id="litellm_teams_provisioning",
     default_args=default_args,
-    start_date=pendulum.now("UTC").subtract(days=1),  # timezone-aware start_date in the past
-    schedule_interval=None,
+    start_date=pendulum.now("UTC").subtract(days=1),  # start date in the past
+    schedule=None,  # only manual runs
     catchup=False,
     tags=["litellm", "provisioning"],
 )
