@@ -1,5 +1,5 @@
 from airflow import DAG
-from airflow.operators.python import PythonOperator
+from airflow.providers.standard.operators.python import PythonOperator
 from airflow.models import Variable
 import requests
 import yaml
@@ -10,7 +10,6 @@ import os
 # Config
 LITELLM_URL = Variable.get("LITELLM_URL")
 API_KEY = Variable.get("LITELLM_API_KEY")
-
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 CONFIG_PATH = os.path.join(BASE_DIR, "configs", "litellm_teams.yaml")
 
@@ -31,14 +30,12 @@ dag = DAG(
 
 def provision_teams(**context):
     logging.info("Loading config file...")
-
     with open(CONFIG_PATH) as f:
         config = yaml.safe_load(f)
 
     teams = config.get("teams", [])
 
     logging.info("Fetching existing teams from LiteLLM...")
-
     response = requests.get(
         f"{LITELLM_URL}/team/list",
         headers={"Authorization": f"Bearer {API_KEY}"}
@@ -50,10 +47,13 @@ def provision_teams(**context):
     existing_map = {t.get("team_alias"): t for t in existing_teams}
 
     for team in teams:
-        alias = team.get("team_alias")
-
+        # Fall back to 'name' if 'team_alias' is not set
+        alias = team.get("team_alias") or team.get("name")
         if not alias:
-            raise ValueError(f"Team entry missing team_alias: {team}")
+            raise ValueError(f"Team entry missing both 'team_alias' and 'name': {team}")
+
+        # Normalise so downstream functions always see team_alias
+        team = {**team, "team_alias": alias}
 
         if alias not in existing_map:
             logging.info(f"Creating team: {alias}")
@@ -82,7 +82,6 @@ def create_team(team):
         "budget_per_week": team.get("budget_per_week"),
         "models": team.get("models", []),
     }
-
     response = requests.post(
         f"{LITELLM_URL}/team/new",
         headers={"Authorization": f"Bearer {API_KEY}"},
@@ -97,7 +96,6 @@ def update_team(team):
         "budget_per_week": team.get("budget_per_week"),
         "models": team.get("models", []),
     }
-
     response = requests.post(
         f"{LITELLM_URL}/team/update",
         headers={"Authorization": f"Bearer {API_KEY}"},
