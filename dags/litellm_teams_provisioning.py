@@ -6,6 +6,7 @@ import yaml
 import logging
 import pendulum
 import os
+
 # Config
 LITELLM_URL = Variable.get("LITELLM_URL")
 API_KEY = Variable.get("LITELLM_API_KEY")
@@ -18,12 +19,11 @@ default_args = {
     "retries": 2,
 }
 
-# DAG definition
 dag = DAG(
     dag_id="litellm_teams_provisioning",
     default_args=default_args,
-    start_date=pendulum.now("UTC").subtract(days=1),  # timezone-aware start_date
-    schedule=None,  # <-- use `schedule`, not schedule_interval
+    start_date=pendulum.now("UTC").subtract(days=1),
+    schedule=None,
     catchup=False,
     tags=["litellm", "provisioning"],
 )
@@ -46,20 +46,26 @@ def provision_teams(**context):
     response.raise_for_status()
     existing_teams = response.json()
 
-    existing_map = {t["name"]: t for t in existing_teams}
+    # LiteLLM returns team_alias, not name
+    existing_map = {t.get("team_alias"): t for t in existing_teams}
 
     for team in teams:
-        name = team["name"]
+        alias = team.get("team_alias")
 
-        if name not in existing_map:
-            logging.info(f"Creating team: {name}")
+        if not alias:
+            raise ValueError(f"Team entry missing team_alias: {team}")
+
+        if alias not in existing_map:
+            logging.info(f"Creating team: {alias}")
             create_team(team)
         else:
-            if has_changes(team, existing_map[name]):
-                logging.info(f"Updating team: {name}")
+            if has_changes(team, existing_map[alias]):
+                logging.info(f"Updating team: {alias}")
                 update_team(team)
             else:
-                logging.info(f"Skipping team (no changes): {name}")
+                logging.info(f"Skipping team (no changes): {alias}")
+
+    return "done"
 
 
 def has_changes(desired, current):
@@ -71,19 +77,31 @@ def has_changes(desired, current):
 
 
 def create_team(team):
+    payload = {
+        "team_alias": team.get("team_alias"),
+        "budget_per_week": team.get("budget_per_week"),
+        "models": team.get("models", []),
+    }
+
     response = requests.post(
         f"{LITELLM_URL}/team/new",
         headers={"Authorization": f"Bearer {API_KEY}"},
-        json=team
+        json=payload
     )
     response.raise_for_status()
 
 
 def update_team(team):
+    payload = {
+        "team_alias": team.get("team_alias"),
+        "budget_per_week": team.get("budget_per_week"),
+        "models": team.get("models", []),
+    }
+
     response = requests.post(
         f"{LITELLM_URL}/team/update",
         headers={"Authorization": f"Bearer {API_KEY}"},
-        json=team
+        json=payload
     )
     response.raise_for_status()
 
