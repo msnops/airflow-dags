@@ -9,3 +9,7 @@ teams:
     budget_per_week: 50
     models:
       - gpt-4
+  - team_alias: team-gama
+    budget_per_week: 500
+    models:
+      - gpt-4
