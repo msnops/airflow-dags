@@ -17,10 +17,11 @@ default_args = {
     "retries": 2,
 }
 
+# DAG definition
 dag = DAG(
     dag_id="litellm_teams_provisioning",
     default_args=default_args,
-    start_date=pendulum.now("UTC").subtract(days=1),  # compatible with Airflow 2.6+
+    start_date=pendulum.now("UTC").subtract(days=1),  # timezone-aware start_date in the past
     schedule_interval=None,
     catchup=False,
     tags=["litellm", "provisioning"],
