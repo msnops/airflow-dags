@@ -313,7 +313,7 @@ def make_team_tasks(dag: DAG, team: dict):
 # DAG definition
 # ---------------------------------------------------------------------------
 dag = DAG(
-    dag_id="litellm_teams_provisioning",
+    dag_id="litellm_teams_with_branch_and_scheduling",
     default_args={"owner": "platform", "retries": 2},
     start_date=pendulum.datetime(2026, 2, 22, tz="UTC"),
     schedule="0 9 * * *",
