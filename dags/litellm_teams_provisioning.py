@@ -5,12 +5,13 @@ import requests
 import yaml
 import logging
 import pendulum
-
+import os
 # Config
 LITELLM_URL = Variable.get("LITELLM_URL")
 API_KEY = Variable.get("LITELLM_API_KEY")
 
-CONFIG_PATH = "/opt/airflow/dags/configs/litellm_teams.yaml"
+BASE_DIR = os.path.dirname(os.path.dirname(__file__))
+CONFIG_PATH = os.path.join(BASE_DIR, "configs", "litellm_teams.yaml")
 
 default_args = {
     "owner": "platform",
