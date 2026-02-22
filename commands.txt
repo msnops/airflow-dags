@@ -1,0 +1,45 @@
+root@k8smaster:~# kubectl create configmap litellm-teams-config -n airflow --from-literal=litellm_teams.yaml='
+teams:
+  - team_alias: alpha
+    name: team-alpha
+    budget_per_week: 100
+    models:
+      - gpt-4
+      - gpt-3.5-turbo
+  - team_alias: beta
+    name: team-beta
+    budget_per_week: 50
+    models:
+      - gpt-4
+  - team_alias: gama
+    name: team-gama
+    budget_per_week: 500
+    models:
+      - gpt-4
+'
+configmap/litellm-teams-config created
+root@k8smaster:~# kubectl create role airflow-configmap-reader \
+  --verb=get,list \
+  --resource=configmaps \
+  --resource-name=litellm-teams-config \
+  -n airflow
+
+kubectl create rolebinding airflow-configmap-reader \
+  --role=airflow-configmap-reader \
+  --serviceaccount=airflow:airflow-worker \
+  -n airflow
+role.rbac.authorization.k8s.io/airflow-configmap-reader created
+rolebinding.rbac.authorization.k8s.io/airflow-configmap-reader created
+root@k8smaster:~# kubectl exec -it airflow-worker-0 -n airflow -- pip show kubernetes
+Defaulted container "worker" out of: worker, git-sync, worker-log-groomer, wait-for-airflow-migrations (init), git-sync-init (init)
+Name: kubernetes
+Version: 35.0.0
+Summary: Kubernetes python client
+Home-page: https://github.com/kubernetes-client/python
+Author: Kubernetes
+Author-email:
+License: Apache License Version 2.0
+Location: /home/airflow/.local/lib/python3.12/site-packages
+Requires: certifi, durationpy, python-dateutil, pyyaml, requests, requests-oauthlib, six, urllib3, websocket-client
+Required-by: apache-airflow-providers-cncf-kubernetes
+root@k8smaster:~#
