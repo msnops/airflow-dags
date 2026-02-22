@@ -1,11 +1,11 @@
 teams:
-  - team_name: team-alpha
+  - team_alias: team-alpha
     budget_per_week: 100
     models:
       - gpt-4
       - gpt-3.5-turbo
 
-  - team_name: team-beta
+  - team_alias: team-beta
     budget_per_week: 50
     models:
       - gpt-4
