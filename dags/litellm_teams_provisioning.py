@@ -1,11 +1,10 @@
 from airflow import DAG
 from airflow.operators.python import PythonOperator
-from airflow.utils.timezone import days_ago
 from airflow.models import Variable
 import requests
 import yaml
 import logging
-import os
+import pendulum
 
 # Config
 LITELLM_URL = Variable.get("LITELLM_URL")
@@ -21,7 +20,7 @@ default_args = {
 dag = DAG(
     dag_id="litellm_teams_provisioning",
     default_args=default_args,
-    start_date=days_ago(1),
+    start_date=pendulum.now("UTC").subtract(days=1),  # compatible with Airflow 2.6+
     schedule_interval=None,
     catchup=False,
     tags=["litellm", "provisioning"],
