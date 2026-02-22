@@ -43,3 +43,7 @@ Location: /home/airflow/.local/lib/python3.12/site-packages
 Requires: certifi, durationpy, python-dateutil, pyyaml, requests, requests-oauthlib, six, urllib3, websocket-client
 Required-by: apache-airflow-providers-cncf-kubernetes
 root@k8smaster:~#
+
+
+# Test dag directly
+kubectl exec -it airflow-dag-processor-6dffbc6755-g966t -n airflow -c dag-processor -- python3 /opt/airflow/dags/repo/dags/litellm_teams_with_branch_and_scheduling.py
