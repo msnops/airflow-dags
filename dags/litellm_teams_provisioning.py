@@ -5,13 +5,16 @@ import requests
 import yaml
 import logging
 import pendulum
-import os
+from kubernetes import client, config as k8s_config
 
 # Config
 LITELLM_URL = Variable.get("LITELLM_URL")
 API_KEY = Variable.get("LITELLM_API_KEY")
-BASE_DIR = os.path.dirname(os.path.dirname(__file__))
-CONFIG_PATH = os.path.join(BASE_DIR, "configs", "litellm_teams.yaml")
+
+# ConfigMap settings
+CONFIGMAP_NAME = "litellm-teams-config"
+CONFIGMAP_NAMESPACE = "airflow"
+CONFIGMAP_KEY = "litellm_teams.yaml"
 
 default_args = {
     "owner": "platform",
@@ -28,18 +31,42 @@ dag = DAG(
 )
 
 
+def load_config_from_configmap():
+    """Load the teams YAML from a Kubernetes ConfigMap."""
+    try:
+        # Load in-cluster config (works when running inside Kubernetes)
+        k8s_config.load_incluster_config()
+    except k8s_config.ConfigException:
+        # Fallback to local kubeconfig for local testing
+        k8s_config.load_kube_config()
+
+    v1 = client.CoreV1Api()
+    configmap = v1.read_namespaced_config_map(
+        name=CONFIGMAP_NAME,
+        namespace=CONFIGMAP_NAMESPACE,
+    )
+
+    raw_yaml = configmap.data.get(CONFIGMAP_KEY)
+    if not raw_yaml:
+        raise ValueError(
+            f"Key '{CONFIGMAP_KEY}' not found in ConfigMap '{CONFIGMAP_NAME}'. "
+            f"Available keys: {list(configmap.data.keys())}"
+        )
+
+    return yaml.safe_load(raw_yaml)
+
+
 def provision_teams(**context):
     # ------------------------------------------------------------------ setup
     logging.info("=" * 60)
     logging.info("Starting LiteLLM teams provisioning")
-    logging.info(f"LiteLLM URL : {LITELLM_URL}")
-    logging.info(f"Config path : {CONFIG_PATH}")
+    logging.info(f"LiteLLM URL  : {LITELLM_URL}")
+    logging.info(f"ConfigMap    : {CONFIGMAP_NAMESPACE}/{CONFIGMAP_NAME} → {CONFIGMAP_KEY}")
     logging.info("=" * 60)
 
     # ------------------------------------------------------------------ load config
-    logging.info("Loading config file...")
-    with open(CONFIG_PATH) as f:
-        config = yaml.safe_load(f)
+    logging.info("Loading config from Kubernetes ConfigMap...")
+    config = load_config_from_configmap()
 
     teams = config.get("teams", [])
     logging.info(f"Found {len(teams)} team(s) in config: {[t.get('team_alias') or t.get('name') for t in teams]}")
@@ -53,11 +80,9 @@ def provision_teams(**context):
     response.raise_for_status()
     existing_teams = response.json()
 
-    # LiteLLM returns team_alias, not name
     existing_map = {t.get("team_alias"): t for t in existing_teams}
     logging.info(f"Found {len(existing_map)} existing team(s) in LiteLLM: {list(existing_map.keys())}")
 
-    # Log a sample to help debug field names if needed
     if existing_map:
         sample = next(iter(existing_map.values()))
         logging.debug(f"Existing team sample fields: {list(sample.keys())}")
@@ -66,13 +91,12 @@ def provision_teams(**context):
     created, updated, skipped, errors = [], [], [], []
 
     for team in teams:
-        # Fall back to 'name' if 'team_alias' is not set
         alias = team.get("team_alias") or team.get("name")
         if not alias:
             msg = f"Team entry missing both 'team_alias' and 'name': {team}"
             logging.error(msg)
             errors.append(team)
-            continue  # skip bad entry rather than aborting everything
+            continue
 
         # Normalise so downstream functions always see team_alias
         team = {**team, "team_alias": alias}
@@ -121,7 +145,6 @@ def get_changes(desired, current):
     """
     changes = {}
 
-    # budget_per_week in config maps to max_budget in LiteLLM
     desired_budget = desired.get("budget_per_week")
     current_budget = current.get("max_budget")
     if desired_budget != current_budget:
