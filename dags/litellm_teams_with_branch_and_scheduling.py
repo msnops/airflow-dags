@@ -1,5 +1,5 @@
 """
-RDX-610 — Implement litellm_teams_provisioning DAG with Branching Logic
+Implement litellm_teams_provisioning DAG with Branching Logic
 
 Objective:
     Automate LiteLLM team provisioning with intelligent branching logic.
