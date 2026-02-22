@@ -57,6 +57,11 @@ def provision_teams(**context):
     existing_map = {t.get("team_alias"): t for t in existing_teams}
     logging.info(f"Found {len(existing_map)} existing team(s) in LiteLLM: {list(existing_map.keys())}")
 
+    # Log a sample to help debug field names if needed
+    if existing_map:
+        sample = next(iter(existing_map.values()))
+        logging.debug(f"Existing team sample fields: {list(sample.keys())}")
+
     # ------------------------------------------------------------------ reconcile
     created, updated, skipped, errors = [], [], [], []
 
@@ -83,7 +88,7 @@ def provision_teams(**context):
             changes = get_changes(team, existing_map[alias])
             if changes:
                 logging.info(f"  [UPDATE] Team '{alias}' has changes: {changes}")
-                update_team(team)
+                update_team(team, existing_map[alias])
                 logging.info(f"  [UPDATE] Team '{alias}' updated successfully")
                 updated.append(alias)
             else:
@@ -133,8 +138,20 @@ def create_team(team):
     response.raise_for_status()
 
 
-def update_team(team):
+def update_team(team, existing_team):
+    """
+    Update a LiteLLM team. team_id (the internal UUID) is required by the
+    /team/update endpoint — team_alias alone returns a 422.
+    """
+    team_id = existing_team.get("team_id") or existing_team.get("id")
+    if not team_id:
+        raise ValueError(
+            f"Cannot update team '{team.get('team_alias')}': no team_id found in "
+            f"existing team data. Available fields: {list(existing_team.keys())}"
+        )
+
     payload = {
+        "team_id": team_id,
         "team_alias": team.get("team_alias"),
         "budget_per_week": team.get("budget_per_week"),
         "models": team.get("models", []),
