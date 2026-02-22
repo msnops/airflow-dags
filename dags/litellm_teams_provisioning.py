@@ -1,11 +1,10 @@
 from airflow import DAG
 from airflow.operators.python import PythonOperator
-from airflow.utils.timezone import datetime
+from airflow.utils.timezone import days_ago
 from airflow.models import Variable
 import requests
 import yaml
 import logging
-from datetime import timedelta
 import os
 
 # Config
@@ -22,7 +21,7 @@ default_args = {
 dag = DAG(
     dag_id="litellm_teams_provisioning",
     default_args=default_args,
-    start_date=datetime.now() - timedelta(days=1),  # fixed days_ago
+    start_date=days_ago(1),
     schedule_interval=None,
     catchup=False,
     tags=["litellm", "provisioning"],
