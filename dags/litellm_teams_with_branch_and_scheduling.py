@@ -29,7 +29,7 @@ from kubernetes import config as k8s_config
 
 from airflow import DAG
 from airflow.models import Variable
-from airflow.operators.python import BranchPythonOperator, PythonOperator
+from airflow.providers.standard.operators.python import BranchPythonOperator, PythonOperator
 
 # ---------------------------------------------------------------------------
 # Constants
