@@ -1,100 +1,98 @@
 from airflow import DAG
-from airflow.operators.python import PythonOperator, BranchPythonOperator
-from airflow.utils.task_group import TaskGroup
+from airflow.operators.python import PythonOperator
 from airflow.utils.dates import days_ago
+from airflow.models import Variable
 import requests
 import yaml
-import json
+import logging
+import os
 
-LITELLM_URL = "http://192.168.0.151:32200"
-API_KEY = "sk-1234"
+# Config
+LITELLM_URL = Variable.get("LITELLM_URL")
+API_KEY = Variable.get("LITELLM_API_KEY")
+
+CONFIG_PATH = "/opt/airflow/dags/configs/litellm_teams.yaml"
 
 default_args = {
-    "owner": "airflow",
+    "owner": "platform",
+    "retries": 2,
 }
 
 dag = DAG(
-    "litellm_teams_provisioning",
+    dag_id="litellm_teams_provisioning",
     default_args=default_args,
     start_date=days_ago(1),
     schedule_interval=None,
     catchup=False,
+    tags=["litellm", "provisioning"],
 )
 
-def read_config(**context):
-    with open("/opt/airflow/dags/configs/litellm_teams.yaml") as f:
-        config = yaml.safe_load(f)
-    return config["teams"]
 
-def fetch_existing_teams(**context):
+def provision_teams(**context):
+    logging.info("Loading config file...")
+
+    with open(CONFIG_PATH) as f:
+        config = yaml.safe_load(f)
+
+    teams = config.get("teams", [])
+
+    logging.info("Fetching existing teams from LiteLLM...")
+
     response = requests.get(
         f"{LITELLM_URL}/team/list",
         headers={"Authorization": f"Bearer {API_KEY}"}
     )
-    return response.json()
 
-def branch_team(team, existing_teams):
-    existing_names = [t["name"] for t in existing_teams]
+    response.raise_for_status()
+    existing_teams = response.json()
 
-    if team["name"] not in existing_names:
-        return "create_team"
+    existing_map = {t["name"]: t for t in existing_teams}
 
-    # Compare config
-    existing_team = next(t for t in existing_teams if t["name"] == team["name"])
+    for team in teams:
+        name = team["name"]
 
-    if existing_team["budget_per_week"] != team["budget_per_week"]:
-        return "update_team"
+        if name not in existing_map:
+            logging.info(f"Creating team: {name}")
+            create_team(team)
+        else:
+            if has_changes(team, existing_map[name]):
+                logging.info(f"Updating team: {name}")
+                update_team(team)
+            else:
+                logging.info(f"Skipping team (no changes): {name}")
 
-    return "skip_team"
+
+def has_changes(desired, current):
+    compare_fields = ["budget_per_week", "models"]
+
+    for field in compare_fields:
+        if desired.get(field) != current.get(field):
+            return True
+
+    return False
+
 
 def create_team(team):
-    requests.post(
+    response = requests.post(
         f"{LITELLM_URL}/team/new",
         headers={"Authorization": f"Bearer {API_KEY}"},
         json=team
     )
+    response.raise_for_status()
+
+
 def update_team(team):
-    requests.post(
+    response = requests.post(
         f"{LITELLM_URL}/team/update",
         headers={"Authorization": f"Bearer {API_KEY}"},
         json=team
     )
-def skip_team(team):
-    print(f"Skipping team {team['name']} — no changes.")
+    response.raise_for_status()
 
-read_task = PythonOperator(
-    task_id="read_config",
-    python_callable=read_config,
-    dag=dag,
-)
 
-fetch_task = PythonOperator(
-    task_id="fetch_existing_teams",
-    python_callable=fetch_existing_teams,
-    dag=dag,
-)
-
-def process_teams(**context):
-    teams = context["ti"].xcom_pull(task_ids="read_config")
-    existing = context["ti"].xcom_pull(task_ids="fetch_existing_teams")
-
-    for team in teams:
-        action = branch_team(team, existing)
-
-        if action == "create_team":
-            create_team(team)
-        elif action == "update_team":
-            update_team(team)
-        else:
-            skip_team(team)
-
-process_task = PythonOperator(
-    task_id="process_teams",
-    python_callable=process_teams,
+provision_task = PythonOperator(
+    task_id="provision_litellm_teams",
+    python_callable=provision_teams,
     provide_context=True,
     dag=dag,
 )
-
-read_task >> fetch_task >> process_task
-
-
