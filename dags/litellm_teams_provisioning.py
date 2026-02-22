@@ -1,10 +1,11 @@
 from airflow import DAG
 from airflow.operators.python import PythonOperator
-from airflow.utils.dates import days_ago
+from airflow.utils.timezone import datetime
 from airflow.models import Variable
 import requests
 import yaml
 import logging
+from datetime import timedelta
 import os
 
 # Config
@@ -21,7 +22,7 @@ default_args = {
 dag = DAG(
     dag_id="litellm_teams_provisioning",
     default_args=default_args,
-    start_date=days_ago(1),
+    start_date=datetime.now() - timedelta(days=1),  # fixed days_ago
     schedule_interval=None,
     catchup=False,
     tags=["litellm", "provisioning"],
@@ -42,7 +43,6 @@ def provision_teams(**context):
         f"{LITELLM_URL}/team/list",
         headers={"Authorization": f"Bearer {API_KEY}"}
     )
-
     response.raise_for_status()
     existing_teams = response.json()
 
@@ -64,11 +64,9 @@ def provision_teams(**context):
 
 def has_changes(desired, current):
     compare_fields = ["budget_per_week", "models"]
-
     for field in compare_fields:
         if desired.get(field) != current.get(field):
             return True
-
     return False
 
 
@@ -93,6 +91,5 @@ def update_team(team):
 provision_task = PythonOperator(
     task_id="provision_litellm_teams",
     python_callable=provision_teams,
-    provide_context=True,
     dag=dag,
 )
