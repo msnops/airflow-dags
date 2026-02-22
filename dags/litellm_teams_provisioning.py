@@ -112,20 +112,34 @@ def provision_teams(**context):
 
 
 def get_changes(desired, current):
-    """Return a dict of {field: {current, desired}} for fields that differ."""
-    compare_fields = ["budget_per_week", "models"]
+    """
+    Return a dict of {field: {current, desired}} for fields that differ.
+
+    Mapping:
+      config: budget_per_week  →  LiteLLM: max_budget  (+ budget_duration="7d")
+      config: models           →  LiteLLM: models
+    """
     changes = {}
-    for field in compare_fields:
-        d, c = desired.get(field), current.get(field)
-        if d != c:
-            changes[field] = {"current": c, "desired": d}
+
+    # budget_per_week in config maps to max_budget in LiteLLM
+    desired_budget = desired.get("budget_per_week")
+    current_budget = current.get("max_budget")
+    if desired_budget != current_budget:
+        changes["budget"] = {"current": current_budget, "desired": desired_budget}
+
+    desired_models = desired.get("models", [])
+    current_models = current.get("models", [])
+    if desired_models != current_models:
+        changes["models"] = {"current": current_models, "desired": desired_models}
+
     return changes
 
 
 def create_team(team):
     payload = {
         "team_alias": team.get("team_alias"),
-        "budget_per_week": team.get("budget_per_week"),
+        "max_budget": team.get("budget_per_week"),
+        "budget_duration": "7d",
         "models": team.get("models", []),
     }
     logging.debug(f"  POST {LITELLM_URL}/team/new | payload: {payload}")
@@ -142,6 +156,8 @@ def update_team(team, existing_team):
     """
     Update a LiteLLM team. team_id (the internal UUID) is required by the
     /team/update endpoint — team_alias alone returns a 422.
+
+    budget_per_week in config maps to max_budget + budget_duration="7d" in LiteLLM.
     """
     team_id = existing_team.get("team_id") or existing_team.get("id")
     if not team_id:
@@ -153,7 +169,8 @@ def update_team(team, existing_team):
     payload = {
         "team_id": team_id,
         "team_alias": team.get("team_alias"),
-        "budget_per_week": team.get("budget_per_week"),
+        "max_budget": team.get("budget_per_week"),
+        "budget_duration": "7d",
         "models": team.get("models", []),
     }
     logging.debug(f"  POST {LITELLM_URL}/team/update | payload: {payload}")
