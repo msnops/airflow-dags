@@ -44,6 +44,18 @@ CONFIGMAP_KEY = "litellm_teams.yaml"
 XCOM_TEAMS_KEY = "teams"
 XCOM_EXISTING_KEY = "existing_map"
 
+# Mapping of config file keys → LiteLLM API keys
+FIELD_MAP = {
+    "budget_per_week"       : "max_budget",
+    "models"                : "models",
+    "rpm_limit"             : "rpm_limit",
+    "tpm_limit"             : "tpm_limit",
+    "max_parallel_requests" : "max_parallel_requests",
+    "budget_duration"       : "budget_duration",
+    "blocked"               : "blocked",
+    "metadata"              : "metadata",
+}
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -78,12 +90,63 @@ def _fetch_existing_teams() -> dict[str, Any]:
 
 
 def _config_has_changed(desired: dict, current: dict) -> bool:
-    """Return True if budget or models differ."""
+    """Return True if any tracked field differs between desired config and current LiteLLM state."""
+
+    # budget_per_week in config → max_budget in LiteLLM
     if desired.get("budget_per_week") != current.get("max_budget"):
         return True
+
     if desired.get("models", []) != current.get("models", []):
         return True
+
+    if desired.get("rpm_limit") != current.get("rpm_limit"):
+        return True
+
+    if desired.get("tpm_limit") != current.get("tpm_limit"):
+        return True
+
+    if desired.get("max_parallel_requests") != current.get("max_parallel_requests"):
+        return True
+
+    if desired.get("budget_duration") != current.get("budget_duration"):
+        return True
+
+    if desired.get("blocked") != current.get("blocked"):
+        return True
+
+    if desired.get("metadata") != current.get("metadata"):
+        return True
+
     return False
+
+
+def _get_changes(desired: dict, current: dict) -> dict:
+    """Return a dict of {field: {current, desired}} for all fields that differ."""
+    changes = {}
+    for desired_key, litellm_key in FIELD_MAP.items():
+        desired_val = desired.get(desired_key)
+        current_val = current.get(litellm_key)
+        if desired_val != current_val:
+            changes[desired_key] = {"current": current_val, "desired": desired_val}
+    return changes
+
+
+def _build_payload(team: dict, team_id: str | None = None) -> dict:
+    """Build the LiteLLM API payload from config values."""
+    payload = {
+        "team_alias"           : team.get("team_alias"),
+        "max_budget"           : team.get("budget_per_week"),
+        "budget_duration"      : team.get("budget_duration", "7d"),
+        "models"               : team.get("models", []),
+        "rpm_limit"            : team.get("rpm_limit"),
+        "tpm_limit"            : team.get("tpm_limit"),
+        "max_parallel_requests": team.get("max_parallel_requests"),
+        "blocked"              : team.get("blocked", False),
+        "metadata"             : team.get("metadata", {}),
+    }
+    if team_id:
+        payload["team_id"] = team_id
+    return payload
 
 
 def _get_parse_time_teams() -> list[dict]:
@@ -98,7 +161,7 @@ def _get_parse_time_teams() -> list[dict]:
         try:
             k8s_config.load_kube_config()
         except Exception:
-            logging.warning("Could not load k8s config at parse time")
+            logging.warning("[parse-time] Could not load k8s config")
             return []
     try:
         v1 = k8s_client.CoreV1Api()
@@ -115,7 +178,7 @@ def _get_parse_time_teams() -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Per-team task factory — defined OUTSIDE the DAG context so closures work
+# Per-team task factory
 # ---------------------------------------------------------------------------
 
 def make_team_tasks(dag: DAG, team: dict):
@@ -133,9 +196,9 @@ def make_team_tasks(dag: DAG, team: dict):
     tid_audit_updated  = f"task_audit_updated_{alias}"
     tid_skip           = f"task_skip_{alias}"
 
-    # capture alias in closure
+    # capture in closure
     _alias = alias
-    _team = team
+    _team  = team
 
     # -------------------------------------------------------------------
     # Branch 1 — does the team exist?
@@ -161,12 +224,7 @@ def make_team_tasks(dag: DAG, team: dict):
     # -------------------------------------------------------------------
     def _create_team(**context):
         logging.info(f"[{_alias}] Creating team in LiteLLM...")
-        payload = {
-            "team_alias": _alias,
-            "max_budget": _team.get("budget_per_week"),
-            "budget_duration": "7d",
-            "models": _team.get("models", []),
-        }
+        payload = _build_payload(_team)
         logging.debug(f"  Payload: {payload}")
         resp = requests.post(
             f"{LITELLM_URL}/team/new",
@@ -188,11 +246,16 @@ def make_team_tasks(dag: DAG, team: dict):
         result = context["ti"].xcom_pull(task_ids=tid_create)
         logging.info("=" * 60)
         logging.info(f"AUDIT — CREATED team '{_alias}'")
-        logging.info(f"  team_id      : {result.get('team_id') if result else 'n/a'}")
-        logging.info(f"  team_alias   : {_alias}")
-        logging.info(f"  models       : {_team.get('models')}")
-        logging.info(f"  max_budget   : {_team.get('budget_per_week')}")
-        logging.info(f"  budget_cycle : 7d")
+        logging.info(f"  team_id             : {result.get('team_id') if result else 'n/a'}")
+        logging.info(f"  team_alias          : {_alias}")
+        logging.info(f"  models              : {_team.get('models')}")
+        logging.info(f"  max_budget          : {_team.get('budget_per_week')}")
+        logging.info(f"  budget_duration     : {_team.get('budget_duration', '7d')}")
+        logging.info(f"  rpm_limit           : {_team.get('rpm_limit')}")
+        logging.info(f"  tpm_limit           : {_team.get('tpm_limit')}")
+        logging.info(f"  max_parallel_requests: {_team.get('max_parallel_requests')}")
+        logging.info(f"  blocked             : {_team.get('blocked', False)}")
+        logging.info(f"  metadata            : {_team.get('metadata', {})}")
         logging.info("=" * 60)
 
     task_audit_created = PythonOperator(
@@ -235,13 +298,8 @@ def make_team_tasks(dag: DAG, team: dict):
                 f"[{_alias}] Cannot update: no team_id in existing data. "
                 f"Fields: {list(current.keys())}"
             )
-        payload = {
-            "team_id": team_id,
-            "team_alias": _alias,
-            "max_budget": _team.get("budget_per_week"),
-            "budget_duration": "7d",
-            "models": _team.get("models", []),
-        }
+
+        payload = _build_payload(_team, team_id=team_id)
         logging.info(f"[{_alias}] Updating team in LiteLLM...")
         logging.debug(f"  Payload: {payload}")
         resp = requests.post(
@@ -252,18 +310,7 @@ def make_team_tasks(dag: DAG, team: dict):
         logging.debug(f"  Response [{resp.status_code}]: {resp.text}")
         resp.raise_for_status()
         logging.info(f"[{_alias}] Team updated successfully.")
-        changes = {}
-        if _team.get("budget_per_week") != current.get("max_budget"):
-            changes["max_budget"] = {
-                "from": current.get("max_budget"),
-                "to": _team.get("budget_per_week"),
-            }
-        if _team.get("models", []) != current.get("models", []):
-            changes["models"] = {
-                "from": current.get("models"),
-                "to": _team.get("models"),
-            }
-        return changes
+        return _get_changes(_team, current)
 
     task_update = PythonOperator(
         task_id=tid_update,
@@ -276,7 +323,7 @@ def make_team_tasks(dag: DAG, team: dict):
         logging.info("=" * 60)
         logging.info(f"AUDIT — UPDATED team '{_alias}'")
         for field, diff in (changes or {}).items():
-            logging.info(f"  {field}: {diff['from']} → {diff['to']}")
+            logging.info(f"  {field}: {diff['current']} → {diff['desired']}")
         logging.info("=" * 60)
 
     task_audit_updated = PythonOperator(
@@ -331,8 +378,10 @@ def _read_config(**context):
     logging.info(f"ConfigMap : {CONFIGMAP_NAMESPACE}/{CONFIGMAP_NAME} → {CONFIGMAP_KEY}")
     config = _load_configmap()
     teams = config.get("teams", [])
-    logging.info(f"Teams in config ({len(teams)}): "
-                 f"{[t.get('team_alias') or t.get('name') for t in teams]}")
+    logging.info(
+        f"Teams in config ({len(teams)}): "
+        f"{[t.get('team_alias') or t.get('name') for t in teams]}"
+    )
     context["ti"].xcom_push(key=XCOM_TEAMS_KEY, value=teams)
     logging.info("Pushed teams to XCom")
 
@@ -364,6 +413,15 @@ def _validate_config(**context):
         if (team.get("budget_per_week") is not None
                 and not isinstance(team.get("budget_per_week"), (int, float))):
             errors.append(f"Team '{alias}' budget_per_week must be a number.")
+        if (team.get("rpm_limit") is not None
+                and not isinstance(team.get("rpm_limit"), int)):
+            errors.append(f"Team '{alias}' rpm_limit must be an integer.")
+        if (team.get("tpm_limit") is not None
+                and not isinstance(team.get("tpm_limit"), int)):
+            errors.append(f"Team '{alias}' tpm_limit must be an integer.")
+        if (team.get("max_parallel_requests") is not None
+                and not isinstance(team.get("max_parallel_requests"), int)):
+            errors.append(f"Team '{alias}' max_parallel_requests must be an integer.")
 
     if errors:
         for e in errors:
